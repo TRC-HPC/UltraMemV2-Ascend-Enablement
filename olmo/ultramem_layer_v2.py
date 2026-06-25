@@ -437,10 +437,20 @@ class UltraMemLayerV2(torch.nn.Module):
         _scores1_refine = scores1_refine.gather(2, indices1.unsqueeze(dim=-1).expand(-1,-1,-1,scores1_refine.shape[-1]))
         _scores2_refine = scores2_refine.gather(2, indices2.unsqueeze(dim=-1).expand(-1,-1,-1,scores2_refine.shape[-1])) # [bs, head_num, topk, tucker_rank]
 
-        score_list = []
-        for i in range(self.tucker_multihead):
-            score_list.append((_scores1_refine @ (self.tucker_core[i]) @ _scores2_refine.transpose(-1,-2)).view(bs, head_num, -1))
-        all_scores = torch.stack(score_list, dim=-1).sum(dim=-1)
+        if not USE_NPU:
+            score_list = []
+            for i in range(self.tucker_multihead):
+                score_list.append((_scores1_refine @ (self.tucker_core[i]) @ _scores2_refine.transpose(-1,-2)).view(bs, head_num, -1))
+            all_scores = torch.stack(score_list, dim=-1).sum(dim=-1)
+        else:
+            score_list_mat = einops.einsum(
+                _scores1_refine, 
+                self.tucker_core_stacked,
+                _scores2_refine, 
+                "bs head n_keys1 tucker_rank1, core_head head tucker_rank1 tucker_rank2, bs head n_keys2 tucker_rank2 -> core_head bs head n_keys1 n_keys2"
+            )
+            score_list = score_list_mat.reshape(self.tucker_multihead, bs, head_num, -1)
+            all_scores = score_list.sum(dim=0)
 
         all_indices = (
             indices1.view(bs, head_num, self.knn, 1).expand(bs, head_num, self.knn, self.knn) * n_keys +
