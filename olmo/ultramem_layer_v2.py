@@ -566,7 +566,7 @@ class UltraMemLayerV2(torch.nn.Module):
             if pre_input is not None:
                 pre_values = torch.nn.functional.embedding(real_indice, self.pre_values_for_look_up)   # output shape: [bs, knn, pre_vdim]
                 pre_scores = torch.einsum('bd,bkd->bk',(pre_input, pre_values))
-                values = (values * best_scores.unsqueeze(dim=-1) * pre_scores[...,None,None]).view(bs, self.knn*self.head, -1)
+                values = (values * (best_scores.unsqueeze(dim=-1) * pre_scores[...,None,None])).view(bs, self.knn*self.head, -1)
             else:
                 values = (values * best_scores.unsqueeze(dim=-1)).view(bs, self.knn*self.head, -1)
 
