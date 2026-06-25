@@ -334,7 +334,10 @@ class UltraMemLayerV2(torch.nn.Module):
         best_scores, best_indice, balance_reg_loss_key = self.TuckerDecomposedQueryKeyRetrieval(query, keys)
 
         # get real index
-        best_indice = self.shuffle_index[best_indice]
+        if not USE_NPU:
+            best_indice = self.shuffle_index[best_indice]
+        else:
+            best_indice = torch.nn.functional.embedding(best_indice, self.shuffle_index.unsqueeze(1)).squeeze(-1)
         #group_indice = best_indice // self.value_num
         #real_indice = ((best_indice % self.value_num) + self.offset) % self.all_value_num
 
