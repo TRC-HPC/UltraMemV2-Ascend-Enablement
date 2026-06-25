@@ -274,6 +274,15 @@ class UltraMemLayerV2(torch.nn.Module):
             self.score_top1_mean = None
             self.score_topn_mean = None
 
+    def post_load_init(self):
+        if USE_NPU and not self.has_value:        
+            self.tucker_core_uv = torch.nn.Parameter(torch.stack([module.tucker_core_u.flatten(), module.tucker_core_v.flatten()], dim=-1).contiguous())
+            self.tucker_core_stacked = torch.nn.Parameter(torch.stack(tuple(module.tucker_core), dim=0).contiguous())
+        
+    def load_state_dict(self, *args **kwargs):
+        result = super().load_state_dict(*args, **kwargs)
+        self.post_load_init()
+        return result
     
     def _calc_tucker_1rank(self):
         tucker_core_sum = torch.stack(list(self.tucker_core), dim=0).sum(dim=0).to(torch.float32)
@@ -389,8 +398,17 @@ class UltraMemLayerV2(torch.nn.Module):
             )
             scores1_refine, scores2_refine = map(partial(torch.squeeze, dim=-1), scores_refine.split(1, dim=-1))
 
-        scores1 = (scores1_refine * self.tucker_core_u).sum(-1)#.detach()
-        scores2 = (scores2_refine * self.tucker_core_v).sum(-1)#.detach()
+        if not USE_NPU:
+            scores1 = (scores1_refine * self.tucker_core_u).sum(-1)#.detach()
+            scores2 = (scores2_refine * self.tucker_core_v).sum(-1)#.detach()
+        else:
+            scores = einops.einsum(
+                query.view(bs, 2, qtr, self.kdim)[:,:,0,:].unsqueeze(2),
+                keys, 
+                self.tucker_core_uv,
+                "bs tensor_rank heads kdim, heads tensor_rank n_keys kdim tucker_rank, tucker_rank tensor_rank -> tensor_rank bs heads n_keys"
+            )
+            scores1, scores2 = map(partial(torch.squeeze, dim=0), scores.split(1, dim=0))
 
         scores1_chosen, indices1 = scores1.topk(self.knn, dim=2, largest=True, sorted=True)
         scores2_chosen, indices2 = scores2.topk(self.knn, dim=2, largest=True, sorted=True)
